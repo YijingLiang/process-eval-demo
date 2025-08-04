@@ -4,10 +4,52 @@ import numpy as np
 from datetime import datetime, timedelta
 import plotly.express as px
 
+# --- 页面基础配置 ---
 st.set_page_config(page_title="流程评分Demo", layout="wide")
-st.title("📊 自动流程评分原型系统")
+primary_color = '#636efa'    # 主色 蓝
+secondary_color = '#ab63fa'  # 辅色 紫
+background_color = '#f5f7fa' # 页面背景
+font_family = 'Arial, sans-serif'
 
-# 上传CSV文件
+# 自定义CSS美化
+st.markdown(f"""
+    <style>
+    .reportview-container {{
+        background-color: {background_color};
+        font-family: {font_family};
+        color: #222;
+    }}
+    .css-1d391kg {{
+        padding-top: 1rem;
+        padding-bottom: 2rem;
+    }}
+    .css-18e3th9 {{
+        padding-left: 3rem;
+        padding-right: 3rem;
+    }}
+    .stButton>button {{
+        background-color: {primary_color};
+        color: white;
+        font-weight: 600;
+        border-radius: 8px;
+        padding: 8px 24px;
+        border: none;
+        transition: background-color 0.3s ease;
+    }}
+    .stButton>button:hover {{
+        background-color: {secondary_color};
+        color: white;
+    }}
+    .css-1hynsf2 p {{
+        font-size: 18px;
+    }}
+    </style>
+""", unsafe_allow_html=True)
+
+st.title("📊 自动流程评分原型系统")
+st.write("上传流程日志数据或使用模拟数据，自动计算流程绩效评分，并生成可视化报告。")
+
+# --- 上传区 ---
 st.subheader("📤 上传CSV文件进行评分")
 uploaded_file = st.file_uploader("上传包含流程日志的CSV文件", type="csv")
 
@@ -47,32 +89,37 @@ if uploaded_file is not None:
 else:
     st.info("📥 请上传包含流程日志的CSV文件...")
 
+# --- 模拟数据生成 ---
 if df is None:
     st.subheader("🧪 未上传数据，使用内置模拟数据")
+
     def generate_process_data():
         np.random.seed(42)
-        process_ids = [f"P{str(i).zfill(3)}" for i in range(1, 6)]
-        events_per_process = [3, 4, 5, 3, 4]
-        org_units = ['BranchA', 'BranchB', 'HQ']
-        activities = ['Receive Request', 'Review', 'Approve', 'Finalize', 'Archive']
+        process_ids = [f"P{str(i).zfill(4)}" for i in range(1, 51)]
+        events_per_process = np.random.randint(5, 15, size=len(process_ids))
+        org_units = ['BranchA', 'BranchB', 'HQ', 'BranchC', 'BranchD']
+        activities = ['Receive Request', 'Review', 'Approve', 'Finalize', 'Archive', 'Validate', 'Escalate', 'Notify']
         statuses = ['success', 'failed']
 
         rows = []
         start_base = datetime(2025, 8, 1, 9, 0, 0)
 
         for pid, num_events in zip(process_ids, events_per_process):
-            current_time = start_base + timedelta(minutes=np.random.randint(0, 30))
+            current_time = start_base + timedelta(minutes=np.random.randint(0, 1440))
             for eid in range(num_events):
-                event_id = f"E{eid+1:02d}"
-                activity = activities[eid % len(activities)]
-                duration = timedelta(minutes=np.random.randint(5, 30))
+                event_id = f"E{eid+1:03d}"
+                activity = np.random.choice(activities)
+                duration = timedelta(minutes=np.random.randint(5, 60))
                 start_time = current_time
                 end_time = start_time + duration
-                performer = f"User{np.random.choice(list('ABCDE'))}"
+                performer = f"User{np.random.choice(list('ABCDEFGHIJ'))}"
                 org_unit = np.random.choice(org_units)
-                status = np.random.choice(statuses if eid == num_events - 1 else ['success'])
+                if eid == num_events - 1:
+                    status = np.random.choice(statuses, p=[0.9, 0.1])  # 最后一步90%成功，10%失败
+                else:
+                    status = 'success'
                 rows.append([pid, event_id, activity, start_time, end_time, performer, org_unit, status])
-                current_time = end_time + timedelta(minutes=np.random.randint(1, 10))
+                current_time = end_time + timedelta(minutes=np.random.randint(1, 20))
 
         df = pd.DataFrame(rows, columns=[
             'process_id', 'event_id', 'activity_name', 'start_time', 'end_time', 'performer', 'org_unit', 'status'
@@ -81,7 +128,7 @@ if df is None:
 
     df = generate_process_data()
 
-# 计算流程指标
+# --- 计算指标 ---
 def compute_metrics(df):
     process_metrics = []
 
@@ -108,7 +155,7 @@ def compute_metrics(df):
 
     return pd.DataFrame(process_metrics)
 
-# 评分逻辑
+# --- 评分函数 ---
 def score_processes(metrics_df):
     norm_df = (metrics_df.drop(columns=['process_id']) - metrics_df.drop(columns=['process_id']).min()) / \
               (metrics_df.drop(columns=['process_id']).max() - metrics_df.drop(columns=['process_id']).min())
@@ -127,24 +174,97 @@ def score_processes(metrics_df):
     metrics_df["score"] = score.round(1)
     return metrics_df
 
+# --- 显示原始数据 ---
 st.subheader("🔍 原始流程日志数据")
 st.dataframe(df, use_container_width=True)
 
+# --- 计算并评分 ---
 metrics_df = compute_metrics(df)
 scored_df = score_processes(metrics_df)
 
-st.subheader("📈 流程指标 + 自动评分")
-st.dataframe(scored_df, use_container_width=True)
+# --- 图表美化参数 ---
+def style_fig(fig):
+    fig.update_layout(
+        font=dict(family=font_family, size=14, color='#222'),
+        paper_bgcolor=background_color,
+        plot_bgcolor='white',
+        margin=dict(l=40, r=40, t=50, b=40),
+        title_font=dict(size=20, family=font_family),
+        xaxis=dict(showgrid=True, gridcolor='lightgray', zeroline=False),
+        yaxis=dict(showgrid=True, gridcolor='lightgray', zeroline=False)
+    )
+    return fig
 
+# --- 流程评分雷达图 ---
 st.subheader("📊 流程评分雷达图")
-fig = px.line_polar(scored_df, r='score', theta='process_id', line_close=True,
-                    title="流程评分雷达图", markers=True)
-st.plotly_chart(fig, use_container_width=True)
-
-st.subheader("📊 流程指标柱状图")
-fig_bar = px.bar(scored_df.sort_values("score", ascending=False), x='process_id', y='score',
-                 title="流程评分柱状图", text='score')
-st.plotly_chart(fig_bar, use_container_width=True)
+fig_radar = px.line_polar(
+    scored_df,
+    r='score',
+    theta='process_id',
+    line_close=True,
+    markers=True,
+    title="流程评分雷达图",
+    color_discrete_sequence=[primary_color]
+)
+fig_radar.update_traces(fill='toself', fillcolor='rgba(99,110,250,0.2)')
+fig_radar.update_layout(
+    polar=dict(
+        bgcolor='white',
+        radialaxis=dict(showline=True, linewidth=1, gridcolor='lightgray', gridwidth=0.5, tickfont=dict(size=10)),
+        angularaxis=dict(tickfont=dict(size=10))
+    )
+)
+st.plotly_chart(fig_radar, use_container_width=True)
 
 st.markdown("---")
-st.markdown("🔁 当前支持上传CSV文件进行评分，也可以使用内置模拟数据。建议字段包括：流程ID、事件ID、事件名称、事件开始/结束时间、执行人、执行机构、状态等")
+
+# --- 报告部分 ---
+st.header("📋 流程评分报告")
+
+col1, col2, col3 = st.columns(3)
+col1.metric("平均总耗时（分钟）", f"{scored_df['total_duration_min'].mean():.1f}")
+col2.metric("平均失败步骤数", f"{scored_df['num_failed_steps'].mean():.1f}")
+col3.metric("平均流程评分", f"{scored_df['score'].mean():.1f}")
+
+st.subheader("🚀 评分最高Top 10流程（表现最好）")
+top10 = scored_df.sort_values('score', ascending=False).head(10)
+st.dataframe(top10[['process_id', 'score', 'total_duration_min', 'num_failed_steps']], use_container_width=True)
+
+st.subheader("🐢 评分最低Bottom 10流程（表现最差）")
+bottom10 = scored_df.sort_values('score').head(10)
+st.dataframe(bottom10[['process_id', 'score', 'total_duration_min', 'num_failed_steps']], use_container_width=True)
+
+st.subheader("⏱️ 流程总耗时分布")
+fig_hist = px.histogram(
+    scored_df,
+    x='total_duration_min',
+    nbins=30,
+    labels={'total_duration_min': '总耗时（分钟）'},
+    title="流程总耗时分布直方图",
+    color_discrete_sequence=[primary_color]
+)
+fig_hist = style_fig(fig_hist)
+st.plotly_chart(fig_hist, use_container_width=True)
+
+st.subheader("⚠️ 失败步骤数分布")
+fig_box = px.box(
+    scored_df,
+    y='num_failed_steps',
+    points='all',
+    title="流程失败步骤数分布箱型图",
+    color_discrete_sequence=[secondary_color]
+)
+fig_box.update_layout(
+    yaxis=dict(showgrid=True, gridcolor='lightgray', zeroline=False)
+)
+fig_box = style_fig(fig_box)
+st.plotly_chart(fig_box, use_container_width=True)
+
+st.subheader("📊 失败步骤比例统计")
+total_failed_steps = scored_df['num_failed_steps'].sum()
+total_steps = scored_df['num_activities'].sum()
+failed_rate = total_failed_steps / total_steps if total_steps > 0 else 0
+st.write(f"总失败步骤占所有步骤的比例约为：**{failed_rate:.2%}**")
+
+st.markdown("---")
+st.markdown("🔁 支持上传CSV文件进行评分，也可使用内置模拟数据。字段映射可适配任意列名。")
